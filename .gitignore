@@ -1,0 +1,4 @@
+output
+vmlinux.h
+main
+main.bpf.o
