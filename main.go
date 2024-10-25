@@ -21,7 +21,6 @@ type Event struct {
 	Comm     [16]byte
 	Path     [512]byte
 	ArgvSize uint32
-	Argv     [4096]byte
 }
 
 func main() {
@@ -85,9 +84,10 @@ func main() {
 			slog.Warn("reading data:", "error", err)
 			continue
 		}
+		args := bytes.ReplaceAll(rawData[eventSize:eventSize+event.ArgvSize], []byte{0x00}, []byte(" "))
 		slog.Info("Event", "PID", event.Pid, "PPID", event.Ppid,
 			"Comm", unix.ByteSliceToString(event.Comm[:]),
 			"Path", unix.ByteSliceToString(event.Path[:]),
-			"Args", bytes.ReplaceAll(event.Argv[:event.ArgvSize], []byte{0x00}, []byte(" ")))
+			"Args", args)
 	}
 }

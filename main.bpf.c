@@ -23,12 +23,19 @@ struct {
     __uint(max_entries, 16 * 1024);
 } rb SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, int);
+    __type(value, struct event_t);
+} heap SEC(".maps");
+
 SEC("tracepoint/sched/sched_process_exec")
 int tracepoint__sched__sched_process_exec(struct trace_event_raw_sched_process_exec *ctx) {
     const int zero = 0;
 
     struct event_t *event;
-    event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
+    event = bpf_map_lookup_elem(&heap, &zero);
     if (!event) {
         return 0;
     }
@@ -51,7 +58,12 @@ int tracepoint__sched__sched_process_exec(struct trace_event_raw_sched_process_e
     unsigned int filename_loc = BPF_CORE_READ(ctx, __data_loc_filename) & 0xFFFF;
     bpf_probe_read_kernel_str(&event->filename, sizeof(event->filename), (void *)ctx + filename_loc);
 
-    bpf_ringbuf_submit(event, 0);
+    // calculate the total bytes to send to userspace
+    uint total = sizeof(*event) - ARGV_LEN + arg_sz;
+    if (total > sizeof(*event))
+        return 0;
+
+    bpf_ringbuf_output(&rb, event, total, 0);
 
     return 0;
 }
