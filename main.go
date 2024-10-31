@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"log/slog"
+	"slices"
 	"unsafe"
 
 	bpf "github.com/aquasecurity/libbpfgo"
@@ -19,7 +20,7 @@ type Event struct {
 	Pid      uint32
 	Ppid     uint32
 	Comm     [16]byte
-	Path     [512]byte
+	PathSize uint32
 	ArgvSize uint32
 }
 
@@ -84,10 +85,24 @@ func main() {
 			slog.Warn("reading data:", "error", err)
 			continue
 		}
-		args := bytes.ReplaceAll(rawData[eventSize:eventSize+event.ArgvSize], []byte{0x00}, []byte(" "))
+		argsEnd := eventSize + event.ArgvSize
+		pathEnd := argsEnd + event.PathSize
 		slog.Info("Event", "PID", event.Pid, "PPID", event.Ppid,
 			"Comm", unix.ByteSliceToString(event.Comm[:]),
-			"Path", unix.ByteSliceToString(event.Path[:]),
-			"Args", args)
+			"Path", parsePath(rawData[argsEnd:pathEnd]),
+			"Args", bytes.ReplaceAll(rawData[eventSize:argsEnd], []byte{0x00}, []byte(" ")),
+		)
 	}
+}
+
+func parsePath(s []byte) []byte {
+	if s[0] == '/' {
+		return bytes.TrimSuffix(s, []byte{0x00})
+	}
+	// If prog was passed to exec as a relative path, then
+	// the bpf program provides the path components in reverse
+	// order like: prog\0dir2\0dir1\0mnt\0
+	components := bytes.Split(s, []byte{0x00})
+	slices.Reverse(components)
+	return bytes.Join(components, []byte("/"))
 }

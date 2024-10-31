@@ -1,20 +1,24 @@
 // +build ignore
+
 #include "vmlinux.h"
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#define FILENAME_LEN 512
+#define NAME_MAX 255   // limits.h
+#define PATH_MAX 4096  // limits.h
+#define MAX_PATH_COMPONENTS 20
 #define TASK_COMM_LEN 16  // sched.h
-#define ARGV_LEN 4096     // limits.h has ARG_MAX 128KB that also includes environ
+#define ARGV_LEN 4096     // limits.h has ARG_MAX 128KB which also includes environ
+#define BUF_MAX (ARGV_LEN + PATH_MAX)
 
 struct event_t {
     u32 pid;
     u32 ppid;
     char comm[TASK_COMM_LEN];
-    char filename[FILENAME_LEN];
+    u32 path_size;
     u32 argv_size;
-    char argv[ARGV_LEN];
+    u8 buf[BUF_MAX];  // argv followed by path components
 };
 
 // BPF ringbuf map
@@ -29,6 +33,68 @@ struct {
     __type(key, int);
     __type(value, struct event_t);
 } heap SEC(".maps");
+
+// Append dentry name to buf at buf_off
+static __always_inline int
+process_dentry(u8 *buf, int buf_off, struct dentry *dentry) {
+    struct qstr d_name = BPF_CORE_READ(dentry, d_name);
+    uint len = d_name.len;
+
+    // TODO why len > NAME_MAX fails verifier
+    if (len > 128)
+        return -1;
+    // also read the trailing \0
+    int sz = bpf_probe_read_kernel_str(&buf[buf_off], len + 1, (void *)d_name.name);
+    if (sz < 0)
+        return -1;
+
+    buf_off += len + 1;
+    return buf_off;
+}
+
+// Walk path up to / appending each component to buf.
+// The components will be in reverse order, e.g. prog\0dir2\0dir1\0mnt\0
+// Reversing and replacing the \0s with slashes will be done in userspace.
+static __always_inline u32
+get_path_str(struct path *path, u8 *buf) {
+    struct dentry *dentry = BPF_CORE_READ(path, dentry);
+    struct vfsmount *vfsmnt = BPF_CORE_READ(path, mnt);
+    struct dentry *mnt_root = BPF_CORE_READ(vfsmnt, mnt_root);
+    struct mount *mnt_p = container_of(vfsmnt, struct mount, mnt);
+    struct mount *mnt_parent_p = BPF_CORE_READ(mnt_p, mnt_parent);
+    int buf_off = 0;
+
+#pragma unroll
+    for (int i = 0; i < MAX_PATH_COMPONENTS; i++) {
+        struct dentry *d_parent = BPF_CORE_READ(dentry, d_parent);
+
+        if (dentry == mnt_root || dentry == d_parent) {
+            if (dentry != mnt_root) {
+                // We reached root, but not mount root - escaped?
+                break;
+            }
+            if (mnt_p != mnt_parent_p) {
+                // We reached root, but not global root - continue with mount point path
+                dentry = BPF_CORE_READ(mnt_p, mnt_mountpoint);
+                mnt_p = BPF_CORE_READ(mnt_p, mnt_parent);
+                mnt_parent_p = BPF_CORE_READ(mnt_p, mnt_parent);
+                vfsmnt = &mnt_p->mnt;
+                mnt_root = BPF_CORE_READ(vfsmnt, mnt_root);
+                continue;
+            }
+            // Global root - path fully parsed
+            break;
+        }
+
+        buf_off = process_dentry(buf, buf_off, dentry);
+        if (buf_off < 0)
+            break;
+
+        dentry = d_parent;
+    }
+
+    return buf_off;
+}
 
 SEC("tracepoint/sched/sched_process_exec")
 int tracepoint__sched__sched_process_exec(struct trace_event_raw_sched_process_exec *ctx) {
@@ -50,16 +116,29 @@ int tracepoint__sched__sched_process_exec(struct trace_event_raw_sched_process_e
     void *arg_end = (void *)BPF_CORE_READ(task, mm, arg_end);
     unsigned long arg_sz = arg_end - arg_start;
     arg_sz = arg_sz < ARGV_LEN ? arg_sz : ARGV_LEN;
-    int arg_ret = bpf_probe_read_user(&event->argv, arg_sz, arg_start);
+    int arg_ret = bpf_probe_read_user(&event->buf, arg_sz, arg_start);
     if (!arg_ret) {
         event->argv_size = arg_sz;
     }
 
     unsigned int filename_loc = BPF_CORE_READ(ctx, __data_loc_filename) & 0xFFFF;
-    bpf_probe_read_kernel_str(&event->filename, sizeof(event->filename), (void *)ctx + filename_loc);
+    int file_sz = bpf_probe_read_kernel_str(&event->buf[arg_sz], PATH_MAX, (void *)ctx + filename_loc);
+    if (file_sz < 0) {
+        return 0;
+    }
+
+    if (event->buf[arg_sz] != '/') {
+        struct file *filp = BPF_CORE_READ(task, mm, exe_file);
+        struct path *p = __builtin_preserve_access_index(&filp->f_path);
+
+        file_sz = get_path_str(p, &event->buf[arg_sz]);
+        if (file_sz < 1)
+            return 0;
+    }
+    event->path_size = file_sz;
 
     // calculate the total bytes to send to userspace
-    uint total = sizeof(*event) - ARGV_LEN + arg_sz;
+    uint total = sizeof(*event) + arg_sz + file_sz - (BUF_MAX);
     if (total > sizeof(*event))
         return 0;
 
