@@ -106,7 +106,9 @@ $(OUTPUT)/libbpf:
 ## program bpf dependency
 
 $(PROGRAM).bpf.o: $(PROGRAM).bpf.c | vmlinuxh
-	$(CLANG) $(CFLAGS) -target bpf -D__TARGET_ARCH_$(BPFARCH) -I. -I$(OUTPUT) -c $< -o $@
+	$(CLANG) $(CFLAGS) -target bpf -D__TARGET_ARCH_$(BPFARCH) -I. -I$(OUTPUT) -c $< -o tmp.bpf.o
+	$(BPFTOOL) gen object $@ tmp.bpf.o
+	rm tmp.bpf.o
 
 ## GO example
 
