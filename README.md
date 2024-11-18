@@ -8,3 +8,21 @@ It's built using [libbpfgo](https://github.com/aquasecurity/libbpfgo) which is a
 The code to find the full path when a relative path is passed to execve is based on [this.](https://github.com/aquasecurity/tracee/blob/a6118678c6908c74d6ee26ca9183e99932d098c9/pkg/ebpf/c/common/filesystem.h#L160)
 
 Most of the [Makefile](Makefile) is explained [here](https://nakryiko.com/posts/libbpf-bootstrap/#makefile).
+
+## Building
+### openSUSE Leap 15.6
+```
+$ sudo zypper install git make libelf-devel bpftool clang go1.23
+```
+Path to `/usr/sbin` is needed for `bpftool`
+
+```
+$ export PATH=$PATH:/usr/sbin
+$ make
+```
+### Debian 12
+For golang see [here](https://go.dev/doc/install).
+```
+$ sudo apt install git make libelf-dev bpftool clang
+$ make
+```
