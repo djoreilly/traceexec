@@ -7,7 +7,7 @@
 
 #define NAME_MAX 255   // limits.h
 #define PATH_MAX 4096  // limits.h
-#define MAX_PATH_COMPONENTS 20
+#define MAX_PATH_COMPONENTS 16
 #define TASK_COMM_LEN 16  // sched.h
 #define ARGV_LEN 4096     // limits.h has ARG_MAX 128KB which also includes environ
 #define BUF_MAX (ARGV_LEN + PATH_MAX)
@@ -40,8 +40,7 @@ process_dentry(u8 *buf, int buf_off, struct dentry *dentry) {
     struct qstr d_name = BPF_CORE_READ(dentry, d_name);
     uint len = d_name.len;
 
-    // TODO why len > NAME_MAX fails verifier
-    if (len > 128)
+    if (len > NAME_MAX)
         return -1;
     // also read the trailing \0
     int sz = bpf_probe_read_kernel_str(&buf[buf_off], len + 1, (void *)d_name.name);
