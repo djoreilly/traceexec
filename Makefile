@@ -4,8 +4,7 @@ LIBBPF = ./libbpf
 LIBBPF_SRC = $(abspath $(LIBBPF)/src)
 LIBBPF_OBJ = $(abspath $(OUTPUT)/libbpf.a)
 
-CC = gcc
-CLANG = clang
+CC = clang
 
 ARCH := $(shell uname -m)
 ARCH := $(subst x86_64,amd64,$(ARCH))
@@ -106,7 +105,7 @@ $(OUTPUT)/libbpf:
 ## program bpf dependency
 
 $(PROGRAM).bpf.o: $(PROGRAM).bpf.c | vmlinuxh
-	$(CLANG) $(CFLAGS) -target bpf -D__TARGET_ARCH_$(BPFARCH) -I. -I$(OUTPUT) -c $< -o tmp.bpf.o
+	$(CC) $(CFLAGS) -target bpf -D__TARGET_ARCH_$(BPFARCH) -I. -I$(OUTPUT) -c $< -o tmp.bpf.o
 	$(BPFTOOL) gen object $@ tmp.bpf.o
 	rm tmp.bpf.o
 
@@ -115,7 +114,7 @@ $(PROGRAM).bpf.o: $(PROGRAM).bpf.c | vmlinuxh
 .PHONY: $(PROGRAM)
 
 $(PROGRAM): libbpf | $(PROGRAM).bpf.o
-	CC=$(CLANG) \
+	CC=$(CC) \
 		CGO_CFLAGS=$(CGO_CFLAGS_STATIC) \
 		CGO_LDFLAGS=$(CGO_LDFLAGS_STATIC) \
                 GOARCH=$(GOARCH) \
