@@ -20,6 +20,7 @@ var bpfCode []byte
 type Event struct {
 	Pid      uint32
 	Ppid     uint32
+	Uid      uint32
 	Comm     [16]byte
 	PathSize uint32
 	ArgvSize uint32
@@ -97,7 +98,7 @@ func main() {
 			path = filepath.Join(cwd, path)
 		}
 
-		slog.Info("Event", "PID", event.Pid, "PPID", event.Ppid,
+		slog.Info("Event", "PID", event.Pid, "PPID", event.Ppid, "Uid", event.Uid,
 			"Comm", unix.ByteSliceToString(event.Comm[:]),
 			"Path", path,
 			"Args", bytes.ReplaceAll(rawData[eventSize:argsEnd], []byte{0x00}, []byte(" ")),

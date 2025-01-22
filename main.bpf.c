@@ -16,6 +16,7 @@
 struct event_t {
     u32 pid;
     u32 ppid;
+    u32 uid;
     char comm[TASK_COMM_LEN];
     u32 path_size;
     u32 argv_size;
@@ -111,6 +112,7 @@ int tracepoint__sched__sched_process_exec(struct trace_event_raw_sched_process_e
 
     event->pid = bpf_get_current_pid_tgid() >> 32;
     event->ppid = BPF_CORE_READ(task, real_parent, tgid);
+    event->uid = (u32)bpf_get_current_uid_gid();
     bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
     void *arg_start = (void *)BPF_CORE_READ(task, mm, arg_start);
