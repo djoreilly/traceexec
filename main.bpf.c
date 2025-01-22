@@ -7,10 +7,11 @@
 
 #define NAME_MAX 255   // limits.h
 #define PATH_MAX 4096  // limits.h
+#define CWD_MAX 4096
 #define MAX_PATH_COMPONENTS 16
 #define TASK_COMM_LEN 16  // sched.h
 #define ARGV_LEN 4096     // limits.h has ARG_MAX 128KB which also includes environ
-#define BUF_MAX (ARGV_LEN + PATH_MAX)
+#define BUF_MAX (ARGV_LEN + PATH_MAX + CWD_MAX)
 
 struct event_t {
     u32 pid;
@@ -18,7 +19,8 @@ struct event_t {
     char comm[TASK_COMM_LEN];
     u32 path_size;
     u32 argv_size;
-    u8 buf[BUF_MAX];  // argv followed by path components
+    u32 cwd_size;
+    u8 buf[BUF_MAX];  // argv followed by path followed by cwd
 };
 
 // BPF ringbuf map
@@ -52,7 +54,7 @@ process_dentry(u8 *buf, int buf_off, struct dentry *dentry) {
 }
 
 // Walk path up to / appending each component to buf.
-// The components will be in reverse order, e.g. prog\0dir2\0dir1\0mnt\0
+// The components will be in reverse order, e.g. dir2\0dir1\0mnt\0
 // Reversing and replacing the \0s with slashes will be done in userspace.
 static __always_inline u32
 get_path_str(struct path *path, u8 *buf) {
@@ -125,19 +127,21 @@ int tracepoint__sched__sched_process_exec(struct trace_event_raw_sched_process_e
     if (file_sz < 0) {
         return 0;
     }
-
-    if (event->buf[arg_sz] != '/') {
-        struct file *filp = BPF_CORE_READ(task, mm, exe_file);
-        struct path *p = __builtin_preserve_access_index(&filp->f_path);
-
-        file_sz = get_path_str(p, &event->buf[arg_sz]);
-        if (file_sz < 1)
-            return 0;
-    }
     event->path_size = file_sz;
 
+    // find the cwd path components and append to buf
+    struct fs_struct *fsp = BPF_CORE_READ(task, fs);
+    struct path *p = __builtin_preserve_access_index(&fsp->pwd);
+    uint cwd_start = arg_sz + file_sz;
+    if (cwd_start > ARGV_LEN + PATH_MAX)
+        return 0;
+    int cwd_sz = get_path_str(p, &event->buf[cwd_start]);
+    if (cwd_sz < 0)
+        return 0;
+    event->cwd_size = cwd_sz;
+
     // calculate the total bytes to send to userspace
-    uint total = sizeof(*event) + arg_sz + file_sz - (BUF_MAX);
+    uint total = sizeof(*event) + arg_sz + file_sz + cwd_sz - (BUF_MAX);
     if (total > sizeof(*event))
         return 0;
 

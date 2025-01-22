@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"unsafe"
 
@@ -22,6 +23,7 @@ type Event struct {
 	Comm     [16]byte
 	PathSize uint32
 	ArgvSize uint32
+	CwdSize  uint32
 }
 
 func main() {
@@ -87,22 +89,32 @@ func main() {
 		}
 		argsEnd := eventSize + event.ArgvSize
 		pathEnd := argsEnd + event.PathSize
+		cwdEnd := pathEnd + event.CwdSize
+
+		cwd := cwdFromPathParts(rawData[pathEnd:cwdEnd])
+		path := unix.ByteSliceToString(rawData[argsEnd:pathEnd])
+		if path[0] != '/' {
+			path = filepath.Join(cwd, path)
+		}
+
 		slog.Info("Event", "PID", event.Pid, "PPID", event.Ppid,
 			"Comm", unix.ByteSliceToString(event.Comm[:]),
-			"Path", parsePath(rawData[argsEnd:pathEnd]),
+			"Path", path,
 			"Args", bytes.ReplaceAll(rawData[eventSize:argsEnd], []byte{0x00}, []byte(" ")),
+			"Cwd", cwd,
 		)
 	}
 }
 
-func parsePath(s []byte) []byte {
-	if s[0] == '/' {
-		return bytes.TrimSuffix(s, []byte{0x00})
+func cwdFromPathParts(s []byte) string {
+	if len(s) == 0 {
+		return "/"
 	}
-	// If prog was passed to exec as a relative path, then
-	// the bpf program provides the path components in reverse
-	// order like: prog\0dir2\0dir1\0mnt\0
+	// the bpf program provides the cwd path components in reverse
+	// order and \0 delimited. Reverse and replace all \0 with /.
+	// e.g. dir2\0dir1\0mnt\0 -> /mnt/dir1/dir2
+
 	components := bytes.Split(s, []byte{0x00})
 	slices.Reverse(components)
-	return bytes.Join(components, []byte("/"))
+	return string(bytes.Join(components, []byte("/")))
 }
