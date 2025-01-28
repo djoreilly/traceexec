@@ -124,20 +124,21 @@ int tracepoint__sched__sched_process_exec(struct trace_event_raw_sched_process_e
         event->argv_size = arg_sz;
     }
 
-    unsigned int filename_loc = BPF_CORE_READ(ctx, __data_loc_filename) & 0xFFFF;
-    int file_sz = bpf_probe_read_kernel_str(&event->buf[arg_sz], PATH_MAX, (void *)ctx + filename_loc);
-    if (file_sz < 0) {
+    // find the exe_file path components and append to buf
+    struct file *filp = BPF_CORE_READ(task, mm, exe_file);
+    struct path *f_path = __builtin_preserve_access_index(&filp->f_path);
+    int file_sz = get_path_str(f_path, &event->buf[arg_sz]);
+    if (file_sz < 0)
         return 0;
-    }
     event->path_size = file_sz;
 
     // find the cwd path components and append to buf
     struct fs_struct *fsp = BPF_CORE_READ(task, fs);
-    struct path *p = __builtin_preserve_access_index(&fsp->pwd);
+    struct path *pwd = __builtin_preserve_access_index(&fsp->pwd);
     uint cwd_start = arg_sz + file_sz;
     if (cwd_start > ARGV_LEN + PATH_MAX)
         return 0;
-    int cwd_sz = get_path_str(p, &event->buf[cwd_start]);
+    int cwd_sz = get_path_str(pwd, &event->buf[cwd_start]);
     if (cwd_sz < 0)
         return 0;
     event->cwd_size = cwd_sz;

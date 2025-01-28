@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"log/slog"
-	"path/filepath"
 	"slices"
 	"unsafe"
 
@@ -88,14 +87,17 @@ func main() {
 			slog.Warn("reading data:", "error", err)
 			continue
 		}
+
 		argsEnd := eventSize + event.ArgvSize
 		pathEnd := argsEnd + event.PathSize
-		cwdEnd := pathEnd + event.CwdSize
+		path := pathFromParts(rawData[argsEnd:pathEnd])
 
-		cwd := cwdFromPathParts(rawData[pathEnd:cwdEnd])
-		path := unix.ByteSliceToString(rawData[argsEnd:pathEnd])
-		if path[0] != '/' {
-			path = filepath.Join(cwd, path)
+		var cwd string
+		if event.CwdSize > 0 {
+			cwdEnd := pathEnd + event.CwdSize
+			cwd = pathFromParts(rawData[pathEnd:cwdEnd])
+		} else {
+			cwd = "/"
 		}
 
 		slog.Info("Event", "PID", event.Pid, "PPID", event.Ppid, "Uid", event.Uid,
@@ -107,14 +109,10 @@ func main() {
 	}
 }
 
-func cwdFromPathParts(s []byte) string {
-	if len(s) == 0 {
-		return "/"
-	}
-	// the bpf program provides the cwd path components in reverse
-	// order and \0 delimited. Reverse and replace all \0 with /.
-	// e.g. dir2\0dir1\0mnt\0 -> /mnt/dir1/dir2
-
+// the bpf program provides path components in reverse
+// order and \0 delimited. Reverse and replace all \0 with /.
+// e.g. dir2\0dir1\0mnt\0 -> /mnt/dir1/dir2
+func pathFromParts(s []byte) string {
 	components := bytes.Split(s, []byte{0x00})
 	slices.Reverse(components)
 	return string(bytes.Join(components, []byte("/")))
