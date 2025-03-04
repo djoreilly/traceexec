@@ -1,5 +1,6 @@
 # Benchmarking
 
+To get consistent results on laptops, configure any power management settings for best performance.
 This fork of libmicro has fixes for Linux https://github.com/rzezeski/libMicro
 
 ## Baseline
